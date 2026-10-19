@@ -2,35 +2,86 @@ import AppKit
 import Combine
 import CoreGraphics
 
+/// Reconfiguration callback, stored once so the exact same pointer can be unregistered in `deinit`.
+/// Must not capture anything: the manager travels through the context pointer.
+private let managerReconfigurationCallback: CGDisplayReconfigurationCallBack = { _, flags, ctx in
+    // Ignore the "begin" phase; refresh once the change has landed.
+    guard !flags.contains(.beginConfigurationFlag), let ctx else { return }
+    let manager = Unmanaged<DisplayManager>.fromOpaque(ctx).takeUnretainedValue()
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+            manager.nameCache.removeAll()
+            manager.refresh()
+        }
+    }
+}
+
 /// Source of truth for the display list. Event-driven: refreshes only on CoreGraphics
 /// reconfiguration callbacks (no polling), which keeps idle CPU at ~0.
 @MainActor
 public final class DisplayManager: ObservableObject {
     @Published public private(set) var displays: [Display] = []
 
-    /// Displays HugeDisplay disabled; kept so they stay listed (and can be re-enabled) while inactive.
+    /// Set by the toggle service: displays HugeDisplay switched off, as (stable key, last known id).
+    /// They are matched by key against the online list on every refresh, so they stay listed (and can be
+    /// re-enabled) across id changes and app relaunches.
+    public var disabledProvider: (@MainActor () -> [(DisplayKey, CGDirectDisplayID?)])?
+
+    /// Displays disabled in this run (see `markDisabled`); only kept while still online and inactive.
     private var disabled: [CGDirectDisplayID: Display] = [:]
-    private var nameCache: [CGDirectDisplayID: String] = [:]
-    private var callbackRegistered = false
+    fileprivate var nameCache: [CGDirectDisplayID: String] = [:]
+    /// Names survive reconfigurations: an inactive display no longer has an NSScreen to ask.
+    private var keyNameCache: [DisplayKey: String] = [:]
 
     public init() {
         refresh()
-        registerReconfigurationCallback()
+        CGDisplayRegisterReconfigurationCallback(managerReconfigurationCallback, Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    deinit {
+        CGDisplayRemoveReconfigurationCallback(managerReconfigurationCallback, Unmanaged.passUnretained(self).toOpaque())
     }
 
     public func refresh() {
         let active = Self.activeIDs()
+        let activeSet = Set(active)
+        let online = Self.onlineIDs().map { (id: $0, key: DisplayKey($0)) }
+        let onlineSet = Set(online.map(\.id))
         let mainID = CGMainDisplayID()
         var result: [Display] = []
         for id in active {
-            disabled.removeValue(forKey: id)
             result.append(snapshot(id, isMain: id == mainID, isEnabled: true))
         }
-        for (_, var d) in disabled.sorted(by: { $0.key < $1.key }) {
+
+        // Disabled displays: rebuilt every refresh, intersected with the online list.
+        var listed = activeSet
+        var inactive: [Display] = []
+        func addInactive(_ id: CGDirectDisplayID, base: Display?) {
+            guard !listed.contains(id), onlineSet.contains(id) else { return }
+            listed.insert(id)
+            var d = base ?? snapshot(id, isMain: false, isEnabled: false)
+            if d.id != id {
+                d = Display(id: id, key: d.key, name: d.name, isBuiltin: CGDisplayIsBuiltin(id) != 0, isMain: false,
+                            isEnabled: false, isVirtual: d.isVirtual, currentMode: d.currentMode)
+            }
             d.isMain = false
             d.isEnabled = false
-            result.append(d)
+            inactive.append(d)
         }
+        disabled = disabled.filter { onlineSet.contains($0.key) && !activeSet.contains($0.key) }
+        for (id, d) in disabled.sorted(by: { $0.key < $1.key }) { addInactive(id, base: d) }
+        var claimed = listed
+        for (key, hint) in disabledProvider?() ?? [] {
+            let entry = DisabledDisplay(id: hint ?? 0, key: key)
+            guard let id = TogglePolicy.resolveID(for: entry, online: online, active: activeSet, excluding: claimed),
+                  !activeSet.contains(id) else { continue }
+            claimed.insert(id)
+            // Reuse what we knew about it while it was active (name, mode) when possible.
+            let previous = displays.first(where: { $0.id == id }) ?? displays.first(where: { $0.key == key })
+            addInactive(id, base: previous)
+        }
+        result.append(contentsOf: inactive.sorted { $0.id < $1.id })
+
         // Built-in first, then by main, then left-to-right.
         result.sort { a, b in
             if a.isBuiltin != b.isBuiltin { return a.isBuiltin }
@@ -72,9 +123,11 @@ public final class DisplayManager: ObservableObject {
 
     private func name(for id: CGDirectDisplayID) -> String {
         if let cached = nameCache[id] { return cached }
+        let key = DisplayKey(id)
         let screenName = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }?.localizedName
-        let n = screenName ?? (CGDisplayIsBuiltin(id) != 0 ? "Built-in Display" : "Display \(id)")
+        let n = screenName ?? keyNameCache[key] ?? (CGDisplayIsBuiltin(id) != 0 ? "Built-in Display" : "Display \(id)")
         nameCache[id] = n
+        if screenName != nil { keyNameCache[key] = n }
         return n
     }
 
@@ -91,21 +144,12 @@ public final class DisplayManager: ObservableObject {
         return Array(ids.prefix(Int(count)))
     }
 
-    private func registerReconfigurationCallback() {
-        guard !callbackRegistered else { return }
-        callbackRegistered = true
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
-        CGDisplayRegisterReconfigurationCallback({ _, flags, ctx in
-            // Ignore the "begin" phase; refresh once the change has landed.
-            guard !flags.contains(.beginConfigurationFlag), let ctx else { return }
-            let manager = Unmanaged<DisplayManager>.fromOpaque(ctx).takeUnretainedValue()
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    manager.nameCache.removeAll()
-                    manager.refresh()
-                }
-            }
-        }, ctx)
+    private static func onlineIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
+        return Array(ids.prefix(Int(count)))
     }
 }
 
