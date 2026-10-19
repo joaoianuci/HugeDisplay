@@ -10,7 +10,7 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
 
     let displays = DisplayManager()
-    let modes: ModeServicing
+    let modes: ModeService
     let toggle: DisplayToggleService
     let brightness: BrightnessService
     let color: ColorServicing
@@ -36,8 +36,13 @@ final class AppModel: ObservableObject {
         displays.$displays
             .dropFirst()
             .removeDuplicates { $0.map(\.id) == $1.map(\.id) }
-            .sink { [weak self] _ in self?.brightness.displaysChanged() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                brightness.displaysChanged()
+                Task { await self.pip.displaysChanged() }
+            }
             .store(in: &observers)
+        modes.onPendingChange = { [weak self] in self?.reloadAll(includeSlowSources: false) }
         // didWake fires before screens are back; screensDidWake is when gamma can be re-applied.
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.screensDidWakeNotification)

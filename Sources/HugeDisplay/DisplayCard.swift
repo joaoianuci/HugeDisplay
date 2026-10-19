@@ -11,6 +11,9 @@ struct DisplayCard: View {
             if display.isEnabled {
                 BrightnessRow(state: state)
                 ModeRows(display: display, state: state)
+                if state.modePendingConfirmation {
+                    ModeConfirmRow(state: state)
+                }
                 ColorRow(state: state)
                 PIPRow(state: state)
             }
@@ -203,6 +206,24 @@ struct PIPRow: View {
                 }
             }
             Spacer()
+        }
+        .controlSize(.small)
+    }
+}
+
+// MARK: - Mode confirmation
+
+struct ModeConfirmRow: View {
+    @ObservedObject var state: DisplayCardModel
+
+    var body: some View {
+        HStack {
+            Text("Keep this resolution? Reverting in \(Int(ModeService.confirmationTimeout)) s")
+                .font(.caption)
+            Spacer()
+            Button("Revert") { state.revertMode() }
+            Button("Keep") { state.confirmMode() }
+                .keyboardShortcut(.defaultAction)
         }
         .controlSize(.small)
     }

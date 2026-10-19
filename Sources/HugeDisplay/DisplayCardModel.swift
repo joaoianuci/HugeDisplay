@@ -18,6 +18,8 @@ final class DisplayCardModel: ObservableObject {
     @Published private(set) var pipBusy = false
     @Published private(set) var hasPipPermission = true
     @Published private(set) var pipClickThrough = false
+    /// True while a new mode waits for "Keep" before the 15 s auto-revert.
+    @Published private(set) var modePendingConfirmation = false
 
     // Brightness throttling (~30 writes/s max, last value always applied).
     private static let minInterval: Duration = .milliseconds(33)
@@ -41,6 +43,7 @@ final class DisplayCardModel: ObservableObject {
             }
         }
         modes = app.modes.modes(for: id)
+        modePendingConfirmation = app.modes.pendingConfirmation[id] != nil
         presets = app.color.presets(for: id)
         currentPreset = app.color.currentPreset(for: id)
         hasPipPermission = app.pip.hasPermission
@@ -104,6 +107,14 @@ final class DisplayCardModel: ObservableObject {
     func setPipClickThrough(_ on: Bool) {
         app.pip.setClickThrough(on, source: id)
         pipClickThrough = app.pip.isClickThrough(source: id)
+    }
+
+    func confirmMode() {
+        app.modes.confirm(id)
+    }
+
+    func revertMode() {
+        app.modes.revert(id)
     }
 
     func requestPipPermission() {
