@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 @testable import HugeDisplayCore
 
@@ -129,5 +130,26 @@ final class DDCTests: XCTestCase {
         let a = EDIDIdentity(vendor: 1, product: 2, serial: 0)
         let b = EDIDIdentity(vendor: 3, product: 4, serial: 0)
         XCTAssertEqual(DDCMatcher.assign(displays: [a, b], services: [nil, b]), [1: 1])
+    }
+
+    // MARK: Service never blocks the caller
+
+    func testGammaResetOfUndimmedDisplayIsNoOp() {
+        let d = GammaDimmer()
+        d.reset(0xDEAD)
+        XCTAssertEqual(d.factor(for: 0xDEAD), 1)
+    }
+
+    @MainActor
+    func testSynchronousPathsAreCachedOnlyAndFast() {
+        let service = BrightnessService()
+        let id = CGMainDisplayID()
+        let start = Date()
+        for _ in 0..<20 {
+            _ = service.backend(for: id)
+            _ = service.brightness(for: id)
+            service.reapplySoftwareDimming()
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
     }
 }
