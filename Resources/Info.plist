@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>HugeDisplay</string>
     <key>CFBundleIdentifier</key>
-    <string>br.com.techfx.HugeDisplay</string>
+    <string>io.github.joaoianuci.HugeDisplay</string>
     <key>CFBundleExecutable</key>
     <string>HugeDisplay</string>
     <key>CFBundlePackageType</key>

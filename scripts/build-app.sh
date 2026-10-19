@@ -17,6 +17,6 @@ cp "$BIN" "$APP/Contents/MacOS/HugeDisplay"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 # A stable designated requirement keeps the Screen Recording grant across rebuilds
 # as long as the same identity signs it; ad-hoc ("-") is fine for local beta use.
-codesign --force --sign "${SIGN_IDENTITY:--}" --identifier br.com.techfx.HugeDisplay "$APP"
+codesign --force --sign "${SIGN_IDENTITY:--}" --identifier io.github.joaoianuci.HugeDisplay "$APP"
 
 echo "Built $APP ($(du -sh "$APP" | cut -f1))"
