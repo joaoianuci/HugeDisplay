@@ -6,14 +6,14 @@ No licensing, no updater/analytics frameworks, no polling.
 
 ## Baseline to beat (BetterDisplay, measured 2026-10-19, idle, 60 s)
 
-| Metric | BetterDisplay | HugeDisplay target |
-|---|---|---|
-| CPU idle | ~0.03 % avg, 0.2 % peak | < 0.03 % avg |
-| Memory | 91 MB (122 MB RSS) | < 40 MB |
-| Threads | 11 | ≤ 6 |
-| Idle wakeups | ~0.5 /s | < 0.1 /s |
-| Bundle | 77 MB (Paddle, Sentry, Sparkle, helper) | < 5 MB |
-| PIP capture | not measured | measure; zero-copy IOSurface path |
+| Metric | BetterDisplay | Target | HugeDisplay beta (measured) |
+|---|---|---|---|
+| CPU idle | ~0.03 % avg, 0.2 % peak | < 0.03 % avg | 0.0 % |
+| Memory (top) | 91 MB | < 40 MB | 17–18 MB |
+| Threads | 11 | ≤ 6 | 3–6 |
+| Idle wakeups | ~0.5 /s | < 0.1 /s | ~0.2 /s |
+| Bundle | 77 MB (Paddle, Sentry, Sparkle, helper) | < 5 MB | 1.2 MB |
+| PIP capture | not measured | measure | pending (needs Screen Recording grant) |
 
 Details: [docs/research/pip-baseline.md](docs/research/pip-baseline.md).
 
