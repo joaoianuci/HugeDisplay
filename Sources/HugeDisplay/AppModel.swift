@@ -38,9 +38,15 @@ final class AppModel: ObservableObject {
             .removeDuplicates { $0.map(\.id) == $1.map(\.id) }
             .sink { [weak self] _ in self?.brightness.displaysChanged() }
             .store(in: &observers)
+        // didWake fires before screens are back; screensDidWake is when gamma can be re-applied.
         NSWorkspace.shared.notificationCenter
-            .publisher(for: NSWorkspace.didWakeNotification)
+            .publisher(for: NSWorkspace.screensDidWakeNotification)
             .sink { [weak self] _ in self?.brightness.displaysChanged() }
+            .store(in: &observers)
+        // Any completed reconfiguration (incl. mode changes with the same IDs) resets gamma tables.
+        NotificationCenter.default
+            .publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in self?.brightness.reapplySoftwareDimming() }
             .store(in: &observers)
     }
 
@@ -62,25 +68,34 @@ final class AppModel: ObservableObject {
 
     // MARK: - Per-display state
 
+    /// Cards are created in `reloadAll`; creating one lazily here (from a view body) must not publish.
     func cardModel(for id: CGDirectDisplayID) -> DisplayCardModel {
         if let existing = cards[id] { return existing }
         let created = DisplayCardModel(id: id, app: self)
         cards[id] = created
-        created.reload()
+        DispatchQueue.main.async { created.reload() }
         return created
     }
 
     /// Called on menu appear and whenever the display list changes. No timers: purely event driven.
-    func reloadAll() {
+    /// `includeSlowSources` adds the SMAppService XPC round-trip; only worth it when the menu opens.
+    func reloadAll(includeSlowSources: Bool = true) {
         let live = Set(displays.displays.map(\.id))
         for id in Array(cards.keys) where !live.contains(id) { cards[id] = nil }
         for display in displays.displays where display.isEnabled {
-            cardModel(for: display.id).reload()
+            if cards[display.id] == nil { cards[display.id] = DisplayCardModel(id: display.id, app: self) }
+            cards[display.id]?.reload()
         }
-        refreshLaunchAtLogin()
+        if includeSlowSources { refreshLaunchAtLogin() }
     }
 
+    private var lastMenuReload: ContinuousClock.Instant?
+
+    /// onAppear and didBecomeKey both fire on first open; collapse them into one reload.
     func menuDidAppear() {
+        let now = ContinuousClock.now
+        if let last = lastMenuReload, now - last < .milliseconds(500) { return }
+        lastMenuReload = now
         displays.refresh()
         reloadAll()
     }

@@ -24,9 +24,12 @@ struct MenuView: View {
         .frame(width: 340)
         .onAppear { model.menuDidAppear() }
         // The window can be re-shown without re-creating the view; key-window is the reliable signal.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+        // Only our menu-bar window counts (PIP panels and other windows also become key).
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let window = note.object as? NSWindow,
+                  String(describing: type(of: window)).contains("MenuBarExtra") else { return }
             model.menuDidAppear()
         }
-        .onChange(of: manager.displays) { _, _ in model.reloadAll() }
+        .onChange(of: manager.displays) { _, _ in model.reloadAll(includeSlowSources: false) }
     }
 }

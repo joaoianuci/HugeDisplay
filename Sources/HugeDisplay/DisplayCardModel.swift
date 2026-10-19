@@ -93,6 +93,8 @@ final class DisplayCardModel: ObservableObject {
 
     func apply(_ preset: ColorPreset) {
         app.run { try app.color.apply(preset, to: id) }
+        // Applying a ColorSync profile reloads the gamma table, wiping software dimming.
+        app.brightness.reapplySoftwareDimming()
         currentPreset = app.color.currentPreset(for: id)
     }
 
