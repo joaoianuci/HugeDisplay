@@ -3,7 +3,8 @@ import SwiftUI
 
 @main
 struct HugeDisplayApp: App {
-    @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = AppModel.shared
 
     var body: some Scene {
         MenuBarExtra {
