@@ -12,7 +12,7 @@ final class AppModel: ObservableObject {
     let displays = DisplayManager()
     let modes: ModeServicing
     let toggle: DisplayToggleService
-    let brightness: BrightnessServicing
+    let brightness: BrightnessService
     let color: ColorServicing
     let pip: PIPService
 
@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
 
     /// Per-display UI state, created lazily and pruned when displays disappear.
     private var cards: [CGDirectDisplayID: DisplayCardModel] = [:]
+    private var observers: Set<AnyCancellable> = []
 
     init() {
         modes = ModeService()
@@ -30,6 +31,17 @@ final class AppModel: ObservableObject {
         pip = PIPService()
         // A previous run that crashed or was killed may have left displays disabled.
         if toggle.hasPendingRestore { toggle.restoreAll() }
+
+        // Display IDs and gamma tables reset on reconfiguration and wake; brightness caches must follow.
+        displays.$displays
+            .dropFirst()
+            .removeDuplicates { $0.map(\.id) == $1.map(\.id) }
+            .sink { [weak self] _ in self?.brightness.displaysChanged() }
+            .store(in: &observers)
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak self] _ in self?.brightness.displaysChanged() }
+            .store(in: &observers)
     }
 
     // MARK: - Actions
@@ -98,6 +110,7 @@ final class AppModel: ObservableObject {
     func willTerminate() {
         // Disabled displays must never outlive the app that can bring them back.
         toggle.restoreAll()
+        brightness.restoreSoftwareDimming()
     }
 }
 

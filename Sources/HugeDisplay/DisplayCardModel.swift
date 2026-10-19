@@ -32,10 +32,13 @@ final class DisplayCardModel: ObservableObject {
     }
 
     func reload() {
-        brightnessBackend = app.brightness.backend(for: id)
-        if brightnessBackend != .none, !isDragging, pending == nil,
-           let value = app.brightness.brightness(for: id) {
-            brightness = value
+        // DDC probes/reads take 35-150 ms, so they never run on the main thread.
+        Task {
+            brightnessBackend = await app.brightness.refreshBackend(for: id)
+            let value = await app.brightness.refreshBrightness(for: id)
+            if brightnessBackend != .none, !isDragging, pending == nil, let value {
+                brightness = value
+            }
         }
         modes = app.modes.modes(for: id)
         presets = app.color.presets(for: id)
