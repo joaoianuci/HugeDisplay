@@ -11,7 +11,7 @@ final class AppModel: ObservableObject {
 
     let displays = DisplayManager()
     let modes: ModeServicing
-    let toggle: DisplayToggleServicing
+    let toggle: DisplayToggleService
     let brightness: BrightnessServicing
     let color: ColorServicing
     let pip: PIPServicing
@@ -28,6 +28,8 @@ final class AppModel: ObservableObject {
         brightness = BrightnessService()
         color = ColorService()
         pip = PIPService()
+        // A previous run that crashed or was killed may have left displays disabled.
+        if toggle.hasPendingRestore { toggle.restoreAll() }
     }
 
     // MARK: - Actions
@@ -94,7 +96,8 @@ final class AppModel: ObservableObject {
     // MARK: - Lifecycle
 
     func willTerminate() {
-        // TODO: toggle.restoreAll() + pip persistence
+        // Disabled displays must never outlive the app that can bring them back.
+        toggle.restoreAll()
     }
 }
 
