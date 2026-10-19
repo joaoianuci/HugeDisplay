@@ -71,4 +71,15 @@ final class ModeServiceTests: XCTestCase {
         XCTAssertEqual(ModeService.bestMode(in: sorted, width: 2560, height: 1080, hiDPI: true, refreshRate: 120)?.ioModeID, 3)
         XCTAssertNil(ModeService.bestMode(in: sorted, width: 640, height: 480, hiDPI: false, refreshRate: 60))
     }
+
+    @MainActor
+    func testConfirmAndRevertWithoutPendingAreNoOps() {
+        let service = ModeService()
+        var changes = 0
+        service.onPendingChange = { changes += 1 }
+        service.confirm(12345)
+        service.revert(12345)
+        XCTAssertTrue(service.pendingConfirmation.isEmpty)
+        XCTAssertEqual(changes, 0)
+    }
 }

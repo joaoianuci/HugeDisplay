@@ -6,6 +6,29 @@ import ScreenCaptureKit
 /// Boxes a non-Sendable sample buffer for the hop from the capture queue to the main thread.
 private struct SampleBox: @unchecked Sendable { let buffer: CMSampleBuffer }
 
+/// Lock-protected single latest-frame slot plus a "drain pending" flag.
+private final class FrameSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest: (Int, SampleBox)?
+    private var drainPending = false
+
+    /// Stores the frame (replacing any older one). Returns true when the caller must schedule a drain.
+    func store(_ gen: Int, _ box: SampleBox) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        latest = (gen, box)
+        if drainPending { return false }
+        drainPending = true
+        return true
+    }
+
+    func take() -> (Int, SampleBox)? {
+        lock.lock(); defer { lock.unlock() }
+        drainPending = false
+        defer { latest = nil }
+        return latest
+    }
+}
+
 /// Receives SCStream callbacks on the capture queue and forwards complete frames to the main thread.
 private final class PIPStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let generation: Int
@@ -52,6 +75,7 @@ final class PIPStream {
     private var isRunning = false
     private var worker: Task<Void, Never>?
     private var isShutDown = false
+    private nonisolated let slot = FrameSlot()
 
     private let onFrame: @MainActor (CMSampleBuffer) -> Void
     private let onStop: @MainActor (Error) -> Void
@@ -130,7 +154,11 @@ final class PIPStream {
         let handler = PIPStreamOutput(
             generation: gen,
             onFrame: { [weak self] gen, box in
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.deliver(box.buffer, generation: gen) } }
+                guard let slot = self?.slot else { return }
+                // Latest-frame slot: older undelivered frames are dropped; at most one main-thread drain in flight.
+                if slot.store(gen, box) {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { self?.drain() } }
+                }
             },
             onStop: { [weak self] gen, error in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.streamDied(error, generation: gen) } }
@@ -149,6 +177,11 @@ final class PIPStream {
         stream = nil
         output = nil
         try? await old?.stopCapture()
+    }
+
+    private func drain() {
+        guard let (gen, box) = slot.take() else { return }
+        deliver(box.buffer, generation: gen)
     }
 
     private func deliver(_ buffer: CMSampleBuffer, generation gen: Int) {

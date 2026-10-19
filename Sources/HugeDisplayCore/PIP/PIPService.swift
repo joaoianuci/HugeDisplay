@@ -57,7 +57,11 @@ public final class PIPService: PIPServicing {
         let key = DisplayKey(display)
         let session = PIPSession(display: display, key: key, filter: Self.filter(for: source, content: content), settings: loadSettings(key))
         session.onSettingsChanged = { [weak self] key, settings in self?.saveSettings(settings, for: key) }
-        session.onFailure = { [weak self] id, _ in self?.close(source: id) }
+        // The panel's own close button reports CancellationError: that is an explicit user close (forget the PIP).
+        // Any other error is a stream failure: tear down but keep the key so displaysChanged() can reopen it.
+        session.onFailure = { [weak self] id, error in
+            if error is CancellationError { self?.close(source: id) } else { self?.tearDown(source: id) }
+        }
         sessions[display] = session
 
         if !openKeys.contains(key) {
@@ -66,11 +70,29 @@ public final class PIPService: PIPServicing {
         }
     }
 
+    /// Explicit user close: ends the session and forgets the PIP.
     public func close(source display: CGDirectDisplayID) {
         guard let session = sessions.removeValue(forKey: display) else { return }
         session.close()
         openKeys.removeAll { $0 == session.key }
         saveOpenKeys()
+    }
+
+    /// Ends the session but keeps its key in `openKeys` so it can come back (display off, sleep, replug).
+    private func tearDown(source display: CGDirectDisplayID) {
+        sessions.removeValue(forKey: display)?.close()
+    }
+
+    /// Call on display-list changes: closes sessions whose source is no longer active (keeping their keys) and
+    /// reopens remembered PIPs whose display is active again. Never prompts: does nothing without permission.
+    public func displaysChanged() async {
+        let active = Self.activeDisplayIDs()
+        for id in sessions.keys where !active.contains(id) { tearDown(source: id) }
+        guard hasPermission else { return }
+        for key in openKeys {
+            guard let id = active.first(where: { DisplayKey($0) == key }), sessions[id] == nil else { continue }
+            try? await show(source: id)
+        }
     }
 
     // MARK: - Panel options
