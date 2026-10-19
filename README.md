@@ -23,6 +23,28 @@ No accounts, no license, no telemetry, no updater frameworks, no polling.
 - macOS 15 or later, **Apple Silicon** (DDC brightness uses the Apple Silicon I²C path).
 - Xcode 16+ / Swift 6 toolchain to build.
 
+## Download
+
+Grab the latest `HugeDisplay-vX.Y.Z.zip` from the [Releases page](https://github.com/joaoianuci/HugeDisplay/releases/latest),
+unzip it and drag `HugeDisplay.app` to `/Applications`.
+
+> **The build is ad-hoc signed and not notarized.** There is no paid Apple Developer ID behind it yet, so
+> Gatekeeper will say the app "can't be opened" the first time. You only need to get past it once:
+>
+> - **Right-click** (or Control-click) `HugeDisplay.app` → **Open** → **Open**; or
+> - on recent macOS, try to open it once, then go to **System Settings → Privacy & Security** and click
+>   **Open Anyway**; or
+> - remove the quarantine flag from Terminal:
+>   ```bash
+>   xattr -dr com.apple.quarantine /Applications/HugeDisplay.app
+>   ```
+>
+> You can verify the download against the `.sha256` file attached to the release, or build it yourself (below).
+
+**Roadmap:** releases will move to a Developer ID signature plus Apple notarization, which removes the
+first-launch warning. Until then, ad-hoc builds are the only option; since the signature identity changes
+between versions, macOS may ask you to re-grant Screen Recording (used only by PIP) after an update.
+
 ## Build & install
 
 ```bash

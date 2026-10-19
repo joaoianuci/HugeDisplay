@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app bundle (ad-hoc signed)
+        run: scripts/build-app.sh
+      - name: Package
+        run: |
+          ditto -c -k --keepParent build/HugeDisplay.app "HugeDisplay-${GITHUB_REF_NAME}.zip"
+          shasum -a 256 "HugeDisplay-${GITHUB_REF_NAME}.zip" | tee "HugeDisplay-${GITHUB_REF_NAME}.zip.sha256"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "HugeDisplay-${GITHUB_REF_NAME}.zip" \
+            "HugeDisplay-${GITHUB_REF_NAME}.zip.sha256" \
+            --title "HugeDisplay ${GITHUB_REF_NAME}" \
+            --generate-notes
