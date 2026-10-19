@@ -77,7 +77,8 @@ public enum TogglePolicy {
         disabledByUs: Set<CGDirectDisplayID>
     ) -> Bool {
         guard !disabledByUs.isEmpty else { return false }
-        return !active.contains(where: { $0.isUsable && !disabledByUs.contains($0.id) })
+        // Asleep still counts here: ordinary display sleep must not re-enable a display the user turned off.
+        return !active.contains(where: { $0.isPhysical && !$0.isMirror && !disabledByUs.contains($0.id) })
     }
 
     /// Finds the current id of a display we disabled, matching by key.

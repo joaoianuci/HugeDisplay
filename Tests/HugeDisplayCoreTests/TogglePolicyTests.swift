@@ -79,8 +79,12 @@ final class TogglePolicyTests: XCTestCase {
         XCTAssertTrue(TogglePolicy.needsRecovery(active: [virtual(7)], disabledByUs: [1]))
     }
 
-    func testRecoveryWhenOnlyMirrorOrAsleepDisplaysAreLeft() {
-        XCTAssertTrue(TogglePolicy.needsRecovery(active: [mirror(4), asleep(3)], disabledByUs: [1]))
+    func testRecoveryWhenOnlyMirrorDisplaysAreLeft() {
+        XCTAssertTrue(TogglePolicy.needsRecovery(active: [mirror(4)], disabledByUs: [1]))
+    }
+
+    func testDisplaySleepDoesNotTriggerRecovery() {
+        XCTAssertFalse(TogglePolicy.needsRecovery(active: [asleep(3)], disabledByUs: [1]))
     }
 
     // MARK: resolution / reconciliation
