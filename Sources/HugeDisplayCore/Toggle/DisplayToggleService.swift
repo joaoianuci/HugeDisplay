@@ -165,7 +165,8 @@ public final class DisplayToggleService: DisplayToggleServicing {
         let bootTime = Self.bootTime()
         store.replaceAll(entries.filter { entry in
             guard !active.contains(entry.id) else { return false }
-            if let bootTime, let at = entry.disabledAt, at < bootTime { return false }
+            // Entries without a timestamp predate this field (old builds) and can't be dated: treat as stale.
+            if let bootTime, (entry.disabledAt ?? .distantPast) < bootTime { return false }
             return true
         })
     }

@@ -66,7 +66,8 @@ public final class DisplayManager: ObservableObject {
         for (_, d) in disabled.sorted(by: { $0.key < $1.key }) { addInactive(d) }
         for entry in disabledProvider?() ?? [] where !activeSet.contains(entry.id) {
             // Reuse what we knew about it while it was active (name, mode) when possible.
-            let previous = displays.first(where: { $0.id == entry.id }) ?? displays.first(where: { $0.key == entry.key && !$0.isEnabled })
+            // Matched by id only: identical monitors share a key, so a key match could hand out another display's id.
+            let previous = displays.first(where: { $0.id == entry.id })
             addInactive(previous ?? Display(
                 id: entry.id, key: entry.key,
                 name: entry.name ?? keyNameCache[entry.key] ?? "Display",
@@ -79,7 +80,9 @@ public final class DisplayManager: ObservableObject {
         result.sort { a, b in
             if a.isBuiltin != b.isBuiltin { return a.isBuiltin }
             if a.isEnabled != b.isEnabled { return a.isEnabled }
-            return CGDisplayBounds(a.id).minX < CGDisplayBounds(b.id).minX
+            // Inactive ids have no bounds; tie-break on id so the order (and @Published) stays stable.
+            let ax = CGDisplayBounds(a.id).minX, bx = CGDisplayBounds(b.id).minX
+            return ax != bx ? ax < bx : a.id < b.id
         }
         if result != displays { displays = result }
     }
