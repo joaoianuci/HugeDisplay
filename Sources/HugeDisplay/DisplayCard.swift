@@ -191,6 +191,10 @@ struct PIPRow: View {
                           systemImage: state.pipShowing ? "pip.exit" : "pip.enter")
                 }
                 .disabled(state.pipBusy)
+                if state.pipShowing {
+                    Toggle("Click-through", isOn: Binding(get: { state.pipClickThrough }, set: { state.setPipClickThrough($0) }))
+                        .toggleStyle(.checkbox)
+                }
             } else {
                 Button {
                     state.requestPipPermission()

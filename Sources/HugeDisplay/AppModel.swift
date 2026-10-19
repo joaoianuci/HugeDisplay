@@ -14,7 +14,7 @@ final class AppModel: ObservableObject {
     let toggle: DisplayToggleService
     let brightness: BrightnessServicing
     let color: ColorServicing
-    let pip: PIPServicing
+    let pip: PIPService
 
     @Published var lastError: String?
     @Published private(set) var launchAtLogin = false
@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar only: no Dock icon even when run unbundled via `swift run`.
         NSApp.setActivationPolicy(.accessory)
+        Task { @MainActor in await AppModel.shared.pip.restoreLastSession() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

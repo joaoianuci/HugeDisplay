@@ -17,6 +17,7 @@ final class DisplayCardModel: ObservableObject {
     @Published private(set) var pipShowing = false
     @Published private(set) var pipBusy = false
     @Published private(set) var hasPipPermission = true
+    @Published private(set) var pipClickThrough = false
 
     // Brightness throttling (~30 writes/s max, last value always applied).
     private static let minInterval: Duration = .milliseconds(33)
@@ -41,6 +42,7 @@ final class DisplayCardModel: ObservableObject {
         currentPreset = app.color.currentPreset(for: id)
         hasPipPermission = app.pip.hasPermission
         pipShowing = app.pip.isShowing(source: id)
+        pipClickThrough = app.pip.isClickThrough(source: id)
     }
 
     // MARK: - Brightness
@@ -92,6 +94,12 @@ final class DisplayCardModel: ObservableObject {
     }
 
     // MARK: - PIP
+
+    /// Click-through panels can't receive their own context menu, so the menu bar owns this switch.
+    func setPipClickThrough(_ on: Bool) {
+        app.pip.setClickThrough(on, source: id)
+        pipClickThrough = app.pip.isClickThrough(source: id)
+    }
 
     func requestPipPermission() {
         app.pip.requestPermission()
