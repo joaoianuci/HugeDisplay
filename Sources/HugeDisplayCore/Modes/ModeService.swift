@@ -8,6 +8,14 @@ public final class ModeService: ModeServicing {
     /// the exact object it enumerated. Rebuilt on every modes(for:) call (enumeration is ~0.1 ms).
     private var cache: [CGDirectDisplayID: [String: CGDisplayMode]] = [:]
 
+    /// Seconds the user has to confirm a new mode before it reverts.
+    public static let confirmationTimeout: TimeInterval = 15
+
+    /// Displays awaiting confirmation, mapped to the mode to restore. Observe via `onPendingChange`.
+    public private(set) var pendingConfirmation: [CGDirectDisplayID: DisplayModeOption] = [:]
+    public var onPendingChange: (() -> Void)?
+    private var revertItems: [CGDirectDisplayID: DispatchWorkItem] = [:]
+
     public init() {}
 
     // MARK: - ModeServicing
@@ -38,7 +46,54 @@ public final class ModeService: ModeServicing {
         return modes(for: display).first { Self.signature($0) == Self.signature(raw) } ?? raw
     }
 
+    /// Applies for the session only and starts a 15 s confirmation window: call `confirm(_:)` to make it
+    /// permanent, or `revert(_:)` (also fired automatically on timeout) to restore the previous mode.
     public func apply(_ mode: DisplayModeOption, to display: CGDirectDisplayID) throws {
+        let previous = pendingConfirmation[display] ?? currentMode(for: display)
+        try configure(mode, on: display, option: .forSession)
+        if let previous, Self.signature(previous) != Self.signature(mode) {
+            pendingConfirmation[display] = previous
+            scheduleRevert(for: display)
+        } else {
+            // Nothing to go back to (or re-applied the same mode): no confirmation needed.
+            clearPending(display)
+        }
+        onPendingChange?()
+    }
+
+    /// Keeps the current (session) mode by re-applying it permanently.
+    public func confirm(_ display: CGDirectDisplayID) {
+        guard pendingConfirmation[display] != nil else { return }
+        if let current = currentMode(for: display) {
+            do { try configure(current, on: display, option: .permanently) } catch { /* stays session-only */ }
+        }
+        clearPending(display)
+        onPendingChange?()
+    }
+
+    /// Restores the mode that was active before the pending `apply`.
+    public func revert(_ display: CGDirectDisplayID) {
+        guard let previous = pendingConfirmation[display] else { return }
+        clearPending(display)
+        do { try configure(previous, on: display, option: .forSession) } catch { /* display gone: nothing to restore */ }
+        onPendingChange?()
+    }
+
+    private func scheduleRevert(for display: CGDirectDisplayID) {
+        revertItems[display]?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.revert(display) }
+        }
+        revertItems[display] = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmationTimeout, execute: item)
+    }
+
+    private func clearPending(_ display: CGDirectDisplayID) {
+        pendingConfirmation[display] = nil
+        revertItems.removeValue(forKey: display)?.cancel()
+    }
+
+    private func configure(_ mode: DisplayModeOption, on display: CGDirectDisplayID, option: CGConfigureOption) throws {
         var cgMode = cache[display]?[mode.id]
         if cgMode == nil {
             _ = modes(for: display)
@@ -58,10 +113,9 @@ public final class ModeService: ModeServicing {
             CGCancelDisplayConfiguration(config)
             throw HugeDisplayError.operationFailed("Could not configure display mode (CGError \(err.rawValue))")
         }
-        // .permanently stores the choice in the user's display prefs so it survives reboot, like System Settings.
-        err = CGCompleteDisplayConfiguration(config, .permanently)
+        // CGCompleteDisplayConfiguration releases the config itself, success or not: never cancel after it.
+        err = CGCompleteDisplayConfiguration(config, option)
         guard err == .success else {
-            CGCancelDisplayConfiguration(config)
             throw HugeDisplayError.operationFailed("Could not apply display mode (CGError \(err.rawValue))")
         }
     }
