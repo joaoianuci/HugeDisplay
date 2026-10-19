@@ -1,3 +1,4 @@
+import AppKit
 import HugeDisplayCore
 import SwiftUI
 
@@ -6,37 +7,26 @@ struct MenuView: View {
     @EnvironmentObject private var manager: DisplayManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            if manager.displays.isEmpty {
+                Text("No displays found")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
             ForEach(manager.displays) { display in
-                DisplayRow(display: display)
-                Divider()
+                DisplayCard(display: display, state: model.cardModel(for: display.id))
             }
-            if let error = model.lastError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Text("HugeDisplay").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
-                    .keyboardShortcut("q")
-            }
+            FooterView()
         }
         .padding(12)
         .frame(width: 340)
-    }
-}
-
-/// Placeholder row; replaced by the UI module.
-struct DisplayRow: View {
-    let display: Display
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text(display.name).font(.headline)
-            if let m = display.currentMode {
-                Text("\(m.width)×\(m.height) @ \(Int(m.refreshRate))Hz\(m.isHiDPI ? " HiDPI" : "")")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+        .onAppear { model.menuDidAppear() }
+        // The window can be re-shown without re-creating the view; key-window is the reliable signal.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            model.menuDidAppear()
         }
+        .onChange(of: manager.displays) { _, _ in model.reloadAll() }
     }
 }
