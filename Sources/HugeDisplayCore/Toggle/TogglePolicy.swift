@@ -1,15 +1,31 @@
 import CoreGraphics
 import Foundation
 
-/// A display HugeDisplay switched off. The id is only valid within a login session
-/// (it can change after reboot/replug), so the stable key is stored alongside it and is what we match on.
+/// A display HugeDisplay switched off.
+///
+/// Measured on macOS 27 / M5: a disabled display disappears from every display list (CG online/active and
+/// SkyLight's), but re-enabling it with the same CGDirectDisplayID works. So the id is what we re-enable with;
+/// the key, name and built-in flag are kept because the system can no longer tell us about it while it is off.
 public struct DisabledDisplay: Codable, Hashable, Sendable {
     public let id: CGDirectDisplayID
     public let key: DisplayKey
+    public var name: String?
+    public var isBuiltin: Bool?
+    public var disabledAt: Date?
 
-    public init(id: CGDirectDisplayID, key: DisplayKey) {
+    public init(id: CGDirectDisplayID, key: DisplayKey, name: String? = nil, isBuiltin: Bool? = nil, disabledAt: Date? = nil) {
         self.id = id
         self.key = key
+        self.name = name
+        self.isBuiltin = isBuiltin
+        self.disabledAt = disabledAt
+    }
+
+    // Identity is (id, key); the descriptive fields don't make two entries different.
+    public static func == (a: DisabledDisplay, b: DisabledDisplay) -> Bool { a.id == b.id && a.key == b.key }
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(key)
     }
 }
 

@@ -22,12 +22,11 @@ private let managerReconfigurationCallback: CGDisplayReconfigurationCallBack = {
 public final class DisplayManager: ObservableObject {
     @Published public private(set) var displays: [Display] = []
 
-    /// Set by the toggle service: displays HugeDisplay switched off, as (stable key, last known id).
-    /// They are matched by key against the online list on every refresh, so they stay listed (and can be
-    /// re-enabled) across id changes and app relaunches.
-    public var disabledProvider: (@MainActor () -> [(DisplayKey, CGDirectDisplayID?)])?
+    /// Set by the toggle service: displays HugeDisplay switched off. Listed on every refresh even though the
+    /// system no longer reports them, so they can be re-enabled from the menu, also after an app relaunch.
+    public var disabledProvider: (@MainActor () -> [DisabledDisplay])?
 
-    /// Displays disabled in this run (see `markDisabled`); only kept while still online and inactive.
+    /// Displays disabled in this run (see `markDisabled`); kept until they show up as active again.
     private var disabled: [CGDirectDisplayID: Display] = [:]
     fileprivate var nameCache: [CGDirectDisplayID: String] = [:]
     /// Names survive reconfigurations: an inactive display no longer has an NSScreen to ask.
@@ -45,40 +44,34 @@ public final class DisplayManager: ObservableObject {
     public func refresh() {
         let active = Self.activeIDs()
         let activeSet = Set(active)
-        let online = Self.onlineIDs().map { (id: $0, key: DisplayKey($0)) }
-        let onlineSet = Set(online.map(\.id))
         let mainID = CGMainDisplayID()
         var result: [Display] = []
         for id in active {
             result.append(snapshot(id, isMain: id == mainID, isEnabled: true))
         }
 
-        // Disabled displays: rebuilt every refresh, intersected with the online list.
+        // Disabled displays vanish from every system display list (online included), so they are listed
+        // from what we remember: this run's snapshots plus the toggle service's persisted entries.
         var listed = activeSet
         var inactive: [Display] = []
-        func addInactive(_ id: CGDirectDisplayID, base: Display?) {
-            guard !listed.contains(id), onlineSet.contains(id) else { return }
-            listed.insert(id)
-            var d = base ?? snapshot(id, isMain: false, isEnabled: false)
-            if d.id != id {
-                d = Display(id: id, key: d.key, name: d.name, isBuiltin: CGDisplayIsBuiltin(id) != 0, isMain: false,
-                            isEnabled: false, isVirtual: d.isVirtual, currentMode: d.currentMode)
-            }
+        func addInactive(_ base: Display) {
+            guard !listed.contains(base.id) else { return }
+            listed.insert(base.id)
+            var d = base
             d.isMain = false
             d.isEnabled = false
             inactive.append(d)
         }
-        disabled = disabled.filter { onlineSet.contains($0.key) && !activeSet.contains($0.key) }
-        for (id, d) in disabled.sorted(by: { $0.key < $1.key }) { addInactive(id, base: d) }
-        var claimed = listed
-        for (key, hint) in disabledProvider?() ?? [] {
-            let entry = DisabledDisplay(id: hint ?? 0, key: key)
-            guard let id = TogglePolicy.resolveID(for: entry, online: online, active: activeSet, excluding: claimed),
-                  !activeSet.contains(id) else { continue }
-            claimed.insert(id)
+        disabled = disabled.filter { !activeSet.contains($0.key) }
+        for (_, d) in disabled.sorted(by: { $0.key < $1.key }) { addInactive(d) }
+        for entry in disabledProvider?() ?? [] where !activeSet.contains(entry.id) {
             // Reuse what we knew about it while it was active (name, mode) when possible.
-            let previous = displays.first(where: { $0.id == id }) ?? displays.first(where: { $0.key == key })
-            addInactive(id, base: previous)
+            let previous = displays.first(where: { $0.id == entry.id }) ?? displays.first(where: { $0.key == entry.key && !$0.isEnabled })
+            addInactive(previous ?? Display(
+                id: entry.id, key: entry.key,
+                name: entry.name ?? keyNameCache[entry.key] ?? "Display",
+                isBuiltin: entry.isBuiltin ?? false, isMain: false, isEnabled: false, isVirtual: false, currentMode: nil
+            ))
         }
         result.append(contentsOf: inactive.sorted { $0.id < $1.id })
 
@@ -141,14 +134,6 @@ public final class DisplayManager: ObservableObject {
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
-        return Array(ids.prefix(Int(count)))
-    }
-
-    private static func onlineIDs() -> [CGDirectDisplayID] {
-        var count: UInt32 = 0
-        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
         return Array(ids.prefix(Int(count)))
     }
 }

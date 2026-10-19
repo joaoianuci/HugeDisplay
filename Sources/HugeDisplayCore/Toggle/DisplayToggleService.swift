@@ -16,9 +16,10 @@ private let toggleReconfigurationCallback: CGDisplayReconfigurationCallBack = { 
 /// Enables/disables displays through SkyLight's private `CGSConfigureDisplayEnabled`.
 ///
 /// Safety model:
-/// - The change is applied `.forAppOnly`, so WindowServer reverts it by itself if this process dies (crash, SIGKILL).
-/// - Everything HugeDisplay disables is also persisted (by `DisplayKey`) as a secondary net: on quit, SIGTERM/SIGINT,
-///   on next launch (`restoreAll()`, idempotent), or automatically when no usable display is left.
+/// - Changes are per login session (a reboot re-enables everything).
+/// - Everything HugeDisplay disables is persisted (id + key + name) because a disabled display vanishes from
+///   every system list; it is restored on quit, SIGTERM/SIGINT, next launch (`restoreAll()`, idempotent),
+///   or automatically when no usable display is left.
 ///
 /// The service is meant to live as long as the app; the reconfiguration callback holds an unretained pointer
 /// that is unregistered in `deinit`.
@@ -71,8 +72,13 @@ public final class DisplayToggleService: DisplayToggleServicing {
         ) {
             throw HugeDisplayError.refused(reason)
         }
-        // Persist first: if we crash right after the call, the next launch can still restore it.
-        let entry = DisabledDisplay(id: id, key: DisplayKey(id))
+        // Persist first (with what only the live display can tell us): once it is off, the system forgets it.
+        let entry = DisabledDisplay(
+            id: id, key: DisplayKey(id),
+            name: manager.displays.first(where: { $0.id == id })?.name,
+            isBuiltin: CGDisplayIsBuiltin(id) != 0,
+            disabledAt: Date()
+        )
         manager.markDisabled(id)
         store.add(entry)
         do {
@@ -85,72 +91,44 @@ public final class DisplayToggleService: DisplayToggleServicing {
         manager.refresh()
     }
 
-    /// Re-enables every display HugeDisplay disabled. Idempotent: entries whose display is already active are
-    /// just dropped, and calling it with nothing stored does nothing.
+    /// Re-enables every display HugeDisplay disabled, built-in first. Idempotent; entries that couldn't be
+    /// brought back stay stored so the menu can retry them.
     /// Call from applicationWillTerminate and on launch after a crash.
     public func restoreAll() {
+        reconcileStore()
         let entries = store.all
         guard !entries.isEmpty else { return }
-        let resolutions = TogglePolicy.resolveAll(entries, online: Self.onlineDisplays(), active: Set(Self.activeIDs()))
-
-        var pending: [(entry: DisabledDisplay, target: CGDirectDisplayID)] = []
-        for r in resolutions {
-            switch r.status {
-            case .active, .duplicate: store.remove(r.entry) // already back (e.g. WindowServer reverted it after a crash)
-            case .offline: break // not connected: keep it so a later attempt can retry
-            case .inactive(let target): pending.append((r.entry, target))
-            }
-        }
-        // Built-in first: it is the display the user is most likely stuck without.
-        let ordered = pending.filter { CGDisplayIsBuiltin($0.target) != 0 } + pending.filter { CGDisplayIsBuiltin($0.target) == 0 }
-        for item in ordered {
-            do {
-                try configure(item.target, enabled: true)
-            } catch {
-                continue // keep it persisted so a later attempt can retry
-            }
-            guard Self.activeIDs().contains(item.target) else { continue }
-            store.remove(item.entry)
-            manager.forgetDisabled(item.entry.id)
-            manager.forgetDisabled(item.target)
+        let ordered = entries.filter { $0.isBuiltin == true } + entries.filter { $0.isBuiltin != true }
+        for entry in ordered {
+            try? reenable(entry)
         }
         manager.refresh()
     }
 
     // MARK: - Private
 
-    /// Resolves by `DisplayKey` (the id the UI holds may be stale) and only forgets the stored entry
-    /// once the display is seen in the active list.
     private func enable(_ id: CGDirectDisplayID) throws {
-        let online = Self.onlineDisplays()
-        let entries = store.all
-        let key: DisplayKey
-        if let current = online.first(where: { $0.id == id }) {
-            key = current.key
-        } else if let known = entries.first(where: { $0.id == id })?.key ?? manager.displays.first(where: { $0.id == id })?.key {
-            key = known
-        } else {
-            throw HugeDisplayError.refused("That display isn't connected anymore.")
+        let entry = store.all.first(where: { $0.id == id }) ?? DisabledDisplay(id: id, key: DisplayKey(id))
+        do {
+            try reenable(entry)
+        } catch {
+            manager.refresh()
+            throw error
         }
-        let entry = entries.first(where: { $0.key == key && $0.id == id })
-            ?? entries.first(where: { $0.key == key })
-            ?? DisabledDisplay(id: id, key: key)
-        let active = Set(Self.activeIDs())
-        guard let target = TogglePolicy.resolveID(for: entry, online: online, active: active) else {
-            throw HugeDisplayError.refused("That display isn't connected anymore.")
+        manager.refresh()
+    }
+
+    /// Re-enables by the id it had when we turned it off (a disabled display isn't in any list to look up),
+    /// and only forgets the entry once the display is really active again.
+    private func reenable(_ entry: DisabledDisplay) throws {
+        if !Self.activeIDs().contains(entry.id) {
+            try configure(entry.id, enabled: true)
         }
-        if !active.contains(target) {
-            try configure(target, enabled: true)
-            guard Self.activeIDs().contains(target) else {
-                // Keep the stored entry: it is only dropped once the display is really active.
-                manager.refresh()
-                throw HugeDisplayError.operationFailed("macOS didn't bring the display back. Please try again.")
-            }
+        guard Self.activeIDs().contains(entry.id) else {
+            throw HugeDisplayError.operationFailed("macOS didn't bring the display back. Please try again.")
         }
         store.remove(entry)
-        manager.forgetDisabled(id)
-        manager.forgetDisabled(target)
-        manager.refresh()
+        manager.forgetDisabled(entry.id)
     }
 
     private func configure(_ id: CGDirectDisplayID, enabled: Bool) throws {
@@ -165,41 +143,48 @@ public final class DisplayToggleService: DisplayToggleServicing {
             CGCancelDisplayConfiguration(config)
             throw HugeDisplayError.operationFailed("macOS refused to turn the display \(enabled ? "on" : "off").")
         }
-        // .forAppOnly: WindowServer reverts the change if this process dies, so a crash can't leave displays off.
-        guard CGCompleteDisplayConfiguration(config, .forAppOnly) == .success else {
+        // .forSession: measured on macOS 27, WindowServer does NOT revert .forAppOnly when the process exits,
+        // so it buys no safety. Recovery is ours: restore on quit/signals/launch; a reboot re-enables everything.
+        guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
             throw HugeDisplayError.operationFailed("macOS couldn't apply the display change.")
         }
     }
 
-    /// What the manager lists as disabled: stored entries that are online but not active, with their current ids.
-    private func disabledForDisplay() -> [(DisplayKey, CGDirectDisplayID?)] {
-        let resolutions = TogglePolicy.resolveAll(store.all, online: Self.onlineDisplays(), active: Set(Self.activeIDs()))
-        return resolutions.compactMap { r in
-            if case .inactive(let id) = r.status { return (r.entry.key, id) }
-            return nil
-        }
+    /// What the manager lists as disabled: stored entries that aren't active.
+    private func disabledForDisplay() -> [DisabledDisplay] {
+        let active = Set(Self.activeIDs())
+        return store.all.filter { !active.contains($0.id) }
     }
 
-    /// Drops stored entries whose display is back in the active list and refreshes ids of the rest.
+    /// Drops entries whose display is active again, and entries from before the last boot
+    /// (changes are per session, so a reboot already brought those displays back and their ids are stale).
     private func reconcileStore() {
         let entries = store.all
         guard !entries.isEmpty else { return }
-        store.replaceAll(TogglePolicy.reconciled(entries, online: Self.onlineDisplays(), active: Set(Self.activeIDs())))
+        let active = Set(Self.activeIDs())
+        let bootTime = Self.bootTime()
+        store.replaceAll(entries.filter { entry in
+            guard !active.contains(entry.id) else { return false }
+            if let bootTime, let at = entry.disabledAt, at < bootTime { return false }
+            return true
+        })
     }
 
     /// Called after every display reconfiguration: if nothing usable is left on screen, bring our displays back.
     fileprivate func recoverIfNeeded() {
         reconcileStore()
-        let entries = store.all
-        guard !entries.isEmpty else { return }
-        let resolutions = TogglePolicy.resolveAll(entries, online: Self.onlineDisplays(), active: Set(Self.activeIDs()))
-        let disabledOnline = Set(resolutions.compactMap { r -> CGDirectDisplayID? in
-            if case .inactive(let id) = r.status { return id }
-            return nil
-        })
-        if TogglePolicy.needsRecovery(active: Self.activeIDs().map(ToggleDisplayInfo.current), disabledByUs: disabledOnline) {
+        let disabledByUs = Set(store.all.map(\.id))
+        guard !disabledByUs.isEmpty else { return }
+        if TogglePolicy.needsRecovery(active: Self.activeIDs().map(ToggleDisplayInfo.current), disabledByUs: disabledByUs) {
             restoreAll()
         }
+    }
+
+    private static func bootTime() -> Date? {
+        var tv = timeval()
+        var size = MemoryLayout<timeval>.size
+        guard sysctlbyname("kern.boottime", &tv, &size, nil, 0) == 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(tv.tv_sec) + TimeInterval(tv.tv_usec) / 1_000_000)
     }
 
     private func installSignalHandlers() {
@@ -228,10 +213,6 @@ public final class DisplayToggleService: DisplayToggleServicing {
 
     private static func onlineIDs() -> [CGDirectDisplayID] {
         list(CGGetOnlineDisplayList)
-    }
-
-    private static func onlineDisplays() -> [(id: CGDirectDisplayID, key: DisplayKey)] {
-        onlineIDs().map { (id: $0, key: DisplayKey($0)) }
     }
 
     private static func list(_ fetch: (UInt32, UnsafeMutablePointer<CGDirectDisplayID>?, UnsafeMutablePointer<UInt32>?) -> CGError) -> [CGDirectDisplayID] {
