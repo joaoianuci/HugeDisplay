@@ -23,11 +23,19 @@ final class GammaDimmer {
         factors[id] = f
     }
 
-    /// Re-pushes the stored factors (call after display reconfiguration or wake).
+    /// Re-pushes the stored factors (call after display reconfiguration or wake). Cheap, no DDC.
     func reapply() {
-        for (id, f) in factors where f < 1 {
+        for (id, f) in factors where f < 1 && CGDisplayIsOnline(id) != 0 {
             try? apply(f, to: id)
         }
+    }
+
+    /// Drops this display's dimming (e.g. it switched to hardware brightness). CoreGraphics can only restore
+    /// all displays at once, so the others are re-dimmed afterwards.
+    func reset(_ id: CGDirectDisplayID) {
+        guard factors.removeValue(forKey: id) != nil else { return }
+        CGDisplayRestoreColorSyncSettings()
+        reapply()
     }
 
     func restoreAll() {

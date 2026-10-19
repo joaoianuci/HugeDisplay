@@ -19,17 +19,20 @@ public final class ColorService: ColorServicing {
     public func presets(for display: CGDirectDisplayID) -> [ColorPreset] {
         var entries = factoryEntries(for: display)
         entries.append(contentsOf: installedProfiles())
-        return Self.sortedAndDeduped(entries).map { ColorPreset(id: $0.path, name: $0.name) }
+        let current = Self.deviceInfo(for: display).flatMap { Self.currentProfileURL(in: $0) }
+        // The applied profile may live outside the scanned folders; the picker must still be able to show it.
+        if let current, !entries.contains(where: { $0.path == current.path }) {
+            entries.append(ProfileEntry(path: current.path, name: Self.profileDescription(at: current) ?? current.deletingPathExtension().lastPathComponent, isFactory: false))
+        }
+        return Self.sortedAndDeduped(entries, keeping: current?.path).map { ColorPreset(id: $0.path, name: $0.name) }
     }
 
+    /// Always an element of `presets(for:)` (same id), so a picker selection bound to it never goes blank.
     public func currentPreset(for display: CGDirectDisplayID) -> ColorPreset? {
         guard let info = Self.deviceInfo(for: display) else { return nil }
-        let factory = Self.factoryProfiles(in: info)
-        let url = Self.customProfileURL(in: info)
-            ?? factory.first(where: { $0.isDefault })?.url
-            ?? factory.first?.url
+        let url = Self.currentProfileURL(in: info)
         guard let url else { return nil }
-        return ColorPreset(id: url.path, name: Self.profileDescription(at: url) ?? url.deletingPathExtension().lastPathComponent)
+        return presets(for: display).first { $0.id == url.path }
     }
 
     public func apply(_ preset: ColorPreset, to display: CGDirectDisplayID) throws {
@@ -40,7 +43,13 @@ public final class ColorService: ColorServicing {
             throw HugeDisplayError.operationFailed("Could not identify display \(display) for ColorSync")
         }
         let url = URL(fileURLWithPath: preset.id)
-        let profiles: [CFString: Any] = [kColorSyncDeviceDefaultProfileID.takeUnretainedValue(): url]
+        let info = Self.deviceInfo(for: display)
+        let keys = Self.profileKeys(
+            defaultModeID: info.flatMap { Self.defaultModeID(in: $0) },
+            customKeys: info.map { Self.customModeIDs(in: $0) } ?? []
+        )
+        var profiles: [CFString: Any] = [:]
+        for key in keys { profiles[key as CFString] = url }
         let ok = ColorSyncDeviceSetCustomProfiles(kColorSyncDisplayDeviceClass.takeUnretainedValue(), uuid, profiles as CFDictionary)
         guard ok else {
             throw HugeDisplayError.operationFailed("ColorSync refused profile \"\(preset.name)\" for display \(display)")
@@ -55,12 +64,20 @@ public final class ColorService: ColorServicing {
         var isFactory: Bool
     }
 
-    /// Factory profiles first, then alphabetical (case-insensitive); entries with the same name
-    /// are collapsed, and a factory entry always wins over an installed one.
-    nonisolated static func sortedAndDeduped(_ entries: [ProfileEntry]) -> [ProfileEntry] {
-        var seen = Set<String>()
+    /// Factory profiles first, then alphabetical (case-insensitive). Entries with the same path or the same
+    /// name are collapsed. The winner of a name clash is the entry at `keeping` (the currently applied
+    /// profile), otherwise a factory entry, otherwise the first one seen.
+    nonisolated static func sortedAndDeduped(_ entries: [ProfileEntry], keeping currentPath: String? = nil) -> [ProfileEntry] {
+        func rank(_ e: ProfileEntry) -> Int { e.path == currentPath ? 0 : (e.isFactory ? 1 : 2) }
+        var seenPaths = Set<String>()
+        var seenNames = Set<String>()
         var unique: [ProfileEntry] = []
-        for e in entries.sorted(by: { $0.isFactory && !$1.isFactory }) where seen.insert(e.name.lowercased()).inserted {
+        // `sorted` is not stable, so break ties by original index.
+        let ranked = entries.enumerated().sorted { a, b in
+            let (ra, rb) = (rank(a.element), rank(b.element))
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }
+        for (_, e) in ranked where seenPaths.insert(e.path).inserted && seenNames.insert(e.name.lowercased()).inserted {
             unique.append(e)
         }
         return unique.sorted { a, b in
@@ -68,6 +85,15 @@ public final class ColorService: ColorServicing {
             let c = a.name.localizedCaseInsensitiveCompare(b.name)
             return c == .orderedSame ? a.path < b.path : c == .orderedAscending
         }
+    }
+
+    /// ColorSync mode keys to write a profile under: the default mode first, then every mode that currently
+    /// holds a custom profile (the LG keeps its override under "HDMI HD", not under the generic default key).
+    /// Falls back to `kColorSyncDeviceDefaultProfileID` when nothing is known about the device.
+    nonisolated static func profileKeys(defaultModeID: String?, customKeys: [String]) -> [String] {
+        var keys: [String] = []
+        for k in [defaultModeID].compactMap({ $0 }) + customKeys.sorted() where !keys.contains(k) { keys.append(k) }
+        return keys.isEmpty ? [kColorSyncDeviceDefaultProfileID.takeUnretainedValue() as String] : keys
     }
 
     // MARK: - ColorSync access
@@ -156,7 +182,10 @@ public final class ColorService: ColorServicing {
     private static func defaultModeID(in info: [String: Any]) -> String? {
         let defaultKey = kColorSyncDeviceDefaultProfileID.takeUnretainedValue() as String
         let factory = info[kColorSyncFactoryProfiles.takeUnretainedValue() as String] as? [String: Any]
-        return (info[defaultKey] as? String) ?? (factory?[defaultKey] as? String)
+        if let id = (info[defaultKey] as? String) ?? (factory?[defaultKey] as? String) { return id }
+        // Single factory mode: that is the default by definition.
+        let modes = (factory ?? [:]).filter { $0.value is [String: Any] }
+        return modes.count == 1 ? modes.keys.first : nil
     }
 
     private static func factoryProfiles(in info: [String: Any]) -> [FactoryProfile] {
@@ -169,6 +198,17 @@ public final class ColorService: ColorServicing {
             result.append(FactoryProfile(modeID: modeID, url: url, isDefault: modeID == defaultID))
         }
         return result
+    }
+
+    private static func customModeIDs(in info: [String: Any]) -> [String] {
+        let custom = info[kColorSyncCustomProfiles.takeUnretainedValue() as String] as? [String: Any]
+        return custom.map { Array($0.keys) } ?? []
+    }
+
+    /// Effective profile: the custom override if present, else the factory profile of the default mode.
+    private static func currentProfileURL(in info: [String: Any]) -> URL? {
+        let factory = factoryProfiles(in: info)
+        return customProfileURL(in: info) ?? factory.first(where: { $0.isDefault })?.url ?? factory.first?.url
     }
 
     private static func customProfileURL(in info: [String: Any]) -> URL? {

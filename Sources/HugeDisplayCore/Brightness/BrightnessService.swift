@@ -2,8 +2,10 @@ import CoreGraphics
 import Foundation
 
 /// Brightness for every display: built-in via DisplayServices, external via DDC/CI, gamma dimming otherwise.
-/// `backend(for:)` may block briefly the first time it sees an external display (one DDC read, ~50-150 ms);
-/// use `refreshBackend(for:)` from async contexts to keep that off the main thread.
+/// The synchronous entry points (`backend(for:)`, `brightness(for:)`, `setBrightness`) never perform DDC I/O:
+/// they only consult cached state and, when an external display is not resolved yet, answer provisionally
+/// (`.none` / nil, writes are deferred) while an async probe runs on the DDC queue. `refreshBackend(for:)`
+/// awaits that same probe.
 @MainActor
 public final class BrightnessService: BrightnessServicing {
     /// VCP code 0x10: luminance.
@@ -28,16 +30,24 @@ public final class BrightnessService: BrightnessServicing {
     private let dimmer = GammaDimmer()
     private var resolved: [CGDirectDisplayID: Resolved] = [:]
     private var ddcValues: [CGDirectDisplayID: DDCValue] = [:]
+    /// In-flight DDC probes, so concurrent callers share one round trip.
+    private var probes: [CGDirectDisplayID: Task<BrightnessBackend, Never>] = [:]
+    /// Latest brightness requested while the backend was unresolved; applied when the probe finishes.
+    private var deferred: [CGDirectDisplayID: Double] = [:]
+    /// Bumped by `displaysChanged()` so probes started before a reconfiguration cannot cache stale results.
+    private var epoch = 0
 
     public init() {}
 
     // MARK: - BrightnessServicing
 
+    /// Cached state only, never blocks. An unresolved external display reports `.none` until the async probe
+    /// it triggers completes; an expired failed probe keeps reporting `.software` while it is retried.
     public func backend(for display: CGDirectDisplayID) -> BrightnessBackend {
         if let cached = cachedBackend(display) { return cached }
         if let quick = quickBackend(display) { return remember(quick, for: display) }
-        let probe = ddc.read(Self.brightnessVCP, display: display)
-        return finishProbe(probe, for: display)
+        scheduleProbe(display)
+        return staleBackend(display) ?? BrightnessBackend.none
     }
 
     public func brightness(for display: CGDirectDisplayID) -> Double? {
@@ -49,33 +59,41 @@ public final class BrightnessService: BrightnessServicing {
         }
     }
 
+    /// Never performs DDC I/O on the caller's thread. If the backend is not resolved yet, the value is kept
+    /// (newest wins) and applied as soon as the async probe resolves it.
     public func setBrightness(_ value: Double, for display: CGDirectDisplayID) throws {
         let clamped = min(max(value, 0), 1)
-        switch backend(for: display) {
-        case .builtin:
-            try builtin.setBrightness(clamped, display)
-        case .ddc:
-            guard var state = ddcValues[display] else { throw HugeDisplayError.operationFailed("DDC brightness not read yet") }
-            let raw = DDCScaling.raw(forBrightness: clamped, max: state.max)
-            state.current = raw
-            ddcValues[display] = state
-            ddc.write(Self.brightnessVCP, value: raw, display: display)
-        case .software:
-            try dimmer.set(brightness: clamped, for: display)
-        case .none:
-            throw HugeDisplayError.unsupported("This display cannot be dimmed")
+        if cachedBackend(display) == nil, quickBackend(display) == nil, staleBackend(display) == nil {
+            deferred[display] = clamped
+            scheduleProbe(display)
+            return
         }
+        try apply(clamped, backend: backend(for: display), to: display)
     }
 
     // MARK: - Async / lifecycle helpers
 
-    /// Like `backend(for:)`, but the DDC probe runs on the DDC queue instead of blocking the caller.
+    /// Resolves the backend, running the DDC probe (if needed) on the DDC queue instead of blocking the caller.
     @discardableResult
     public func refreshBackend(for display: CGDirectDisplayID) async -> BrightnessBackend {
         if let cached = cachedBackend(display) { return cached }
         if let quick = quickBackend(display) { return remember(quick, for: display) }
-        let probe = await ddc.readAsync(Self.brightnessVCP, display: display)
-        return finishProbe(probe, for: display)
+        if let running = probes[display] { return await running.value }
+        let startEpoch = epoch
+        let task = Task { @MainActor [weak self] () -> BrightnessBackend in
+            guard let self else { return .none }
+            let probe = await self.ddc.readAsync(Self.brightnessVCP, display: display)
+            let backend = self.finishProbe(probe, for: display, epoch: startEpoch)
+            if self.epoch == startEpoch {
+                self.probes[display] = nil
+                if let value = self.deferred.removeValue(forKey: display) {
+                    try? self.apply(value, backend: backend, to: display)
+                }
+            }
+            return backend
+        }
+        probes[display] = task
+        return await task.value
     }
 
     /// Re-reads the DDC brightness from the monitor (e.g. when the popover opens) off the main thread.
@@ -91,13 +109,17 @@ public final class BrightnessService: BrightnessServicing {
     /// Call after display reconfiguration: drops cached backends and DDC mappings (IDs can change) and
     /// re-applies software dimming, which macOS resets on reconfiguration and wake.
     public func displaysChanged() {
+        epoch += 1
         resolved.removeAll()
         ddcValues.removeAll()
+        probes.removeAll()
         ddc.invalidate()
         dimmer.reapply()
     }
 
-    /// Re-pushes gamma dimming (call on wake).
+    /// Re-pushes gamma dimming. Cheap and safe to call on every completed display reconfiguration, on wake
+    /// and after a color profile is applied: it only touches CoreGraphics gamma tables, never DDC.
+    /// Displays that are not software-dimmed are left alone.
     public func reapplySoftwareDimming() {
         dimmer.reapply()
     }
@@ -136,7 +158,37 @@ public final class BrightnessService: BrightnessServicing {
         return nil
     }
 
-    private func finishProbe(_ probe: (current: UInt16, max: UInt16)?, for display: CGDirectDisplayID) -> BrightnessBackend {
+    private func apply(_ value: Double, backend: BrightnessBackend, to display: CGDirectDisplayID) throws {
+        switch backend {
+        case .builtin:
+            try builtin.setBrightness(value, display)
+        case .ddc:
+            guard var state = ddcValues[display] else { return }
+            let raw = DDCScaling.raw(forBrightness: value, max: state.max)
+            state.current = raw
+            ddcValues[display] = state
+            ddc.write(Self.brightnessVCP, value: raw, display: display)
+        case .software:
+            try dimmer.set(brightness: value, for: display)
+        case .none:
+            throw HugeDisplayError.unsupported("This display cannot be dimmed")
+        }
+    }
+
+    /// An expired (or otherwise outdated) entry for this very display, still usable as a provisional answer.
+    private func staleBackend(_ display: CGDirectDisplayID) -> BrightnessBackend? {
+        guard let entry = resolved[display], entry.key == DisplayKey(display) else { return nil }
+        return entry.backend
+    }
+
+    private func scheduleProbe(_ display: CGDirectDisplayID) {
+        guard probes[display] == nil else { return }
+        Task { await refreshBackend(for: display) }
+    }
+
+    private func finishProbe(_ probe: (current: UInt16, max: UInt16)?, for display: CGDirectDisplayID, epoch probeEpoch: Int) -> BrightnessBackend {
+        // A reconfiguration happened while probing: the result may belong to another display, do not cache it.
+        guard probeEpoch == epoch else { return probe == nil ? .software : .ddc }
         if let probe {
             ddcValues[display] = DDCValue(current: probe.current, max: probe.max)
             return remember(.ddc, for: display)
@@ -148,6 +200,8 @@ public final class BrightnessService: BrightnessServicing {
     private func remember(_ backend: BrightnessBackend, for display: CGDirectDisplayID, expiresIn: TimeInterval? = nil) -> BrightnessBackend {
         // Offline displays have no stable identity worth caching.
         guard backend != .none else { return backend }
+        // Hardware control took over from gamma dimming: undo the gamma so the display is not dimmed twice.
+        if backend != .software { dimmer.reset(display) }
         resolved[display] = Resolved(key: DisplayKey(display), backend: backend, expires: expiresIn.map { Date().addingTimeInterval($0) })
         return backend
     }
