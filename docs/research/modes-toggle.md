@@ -1,5 +1,10 @@
 # HugeDisplay: display modes + enable/disable (findings)
 
+> **Hardware-verified later (macOS 27.0.1, M5), superseding the notes below:** a display disabled with
+> `SLSConfigureDisplayEnabled` disappears from `CGGetOnlineDisplayList`, `CGGetActiveDisplayList` *and*
+> `SLSGetOnlineDisplayList`; calling it again with the same id and `true` brings it back. A `.forAppOnly`
+> disable is **not** reverted when the process exits, so HugeDisplay uses `.forSession` and restores itself.
+
 Probes: enum.swift (enumeration, dlsym), objc.swift (CGVirtualDisplay class check). All read-only. Nothing was called that changes config.
 
 ## Confirmed on this machine (macOS 27.0.1, M5)
