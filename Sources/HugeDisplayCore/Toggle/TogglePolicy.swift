@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// A display HugeDisplay switched off. The id is only valid within a login session
-/// (it can change after reboot/replug), so the stable key is stored alongside it.
+/// (it can change after reboot/replug), so the stable key is stored alongside it and is what we match on.
 public struct DisabledDisplay: Codable, Hashable, Sendable {
     public let id: CGDirectDisplayID
     public let key: DisplayKey
@@ -13,6 +13,36 @@ public struct DisabledDisplay: Codable, Hashable, Sendable {
     }
 }
 
+/// What the toggle policy needs to know about one active display. A plain value so the policy stays pure.
+public struct ToggleDisplayInfo: Equatable, Sendable {
+    public let id: CGDirectDisplayID
+    /// Reports a physical panel size (virtual displays, AirPlay/Sidecar report none).
+    public let isPhysical: Bool
+    /// Mirrors another display (it adds no extra screen for the user).
+    public let isMirror: Bool
+    public let isAsleep: Bool
+
+    public init(id: CGDirectDisplayID, isPhysical: Bool = true, isMirror: Bool = false, isAsleep: Bool = false) {
+        self.id = id
+        self.isPhysical = isPhysical
+        self.isMirror = isMirror
+        self.isAsleep = isAsleep
+    }
+
+    /// A display the user can actually see and work on.
+    public var isUsable: Bool { isPhysical && !isMirror && !isAsleep }
+
+    /// Reads the live CoreGraphics state for `id`.
+    public static func current(_ id: CGDirectDisplayID) -> ToggleDisplayInfo {
+        ToggleDisplayInfo(
+            id: id,
+            isPhysical: CGDisplayScreenSize(id) != .zero,
+            isMirror: CGDisplayMirrorsDisplay(id) != kCGNullDirectDisplay,
+            isAsleep: CGDisplayIsAsleep(id) != 0
+        )
+    }
+}
+
 /// Pure decision logic for enabling/disabling displays. No CoreGraphics calls, so it is unit-testable.
 public enum TogglePolicy {
     public enum Decision: Equatable, Sendable {
@@ -20,43 +50,98 @@ public enum TogglePolicy {
         case refused(String)
     }
 
-    /// `active` and `online` are the CoreGraphics active/online display lists at the time of the request.
+    /// `active` describes the active displays and `online` is the online id list at the time of the request.
+    /// Only physical, visible displays (not virtual, mirrored or asleep) count as "another display".
     public static func canDisable(
         target: CGDirectDisplayID,
-        active: [CGDirectDisplayID],
+        active: [ToggleDisplayInfo],
         online: [CGDirectDisplayID]
     ) -> Decision {
         guard online.contains(target) else {
             return .refused("That display isn't connected anymore.")
         }
-        guard active.contains(target) else {
+        guard active.contains(where: { $0.id == target }) else {
             return .refused("That display is already turned off.")
         }
-        guard active.contains(where: { $0 != target }) else {
+        guard active.contains(where: { $0.id != target && $0.isUsable }) else {
             return .refused("You can't turn off your only active display.")
         }
         return .allowed
     }
 
-    /// True when nothing usable is left on screen even though we switched some display off,
+    /// True when we switched some display off and no usable display is left on screen,
     /// e.g. the external was unplugged while the built-in was disabled.
+    /// `disabledByUs` are the ids (online right now) of the displays we have switched off.
     public static func needsRecovery(
-        active: [CGDirectDisplayID],
-        online: [CGDirectDisplayID],
+        active: [ToggleDisplayInfo],
         disabledByUs: Set<CGDirectDisplayID>
     ) -> Bool {
         guard !disabledByUs.isEmpty else { return false }
-        if active.isEmpty { return true }
-        return online.allSatisfy { disabledByUs.contains($0) }
+        return !active.contains(where: { $0.isUsable && !disabledByUs.contains($0.id) })
     }
 
-    /// Finds the current id of a display we disabled: same id with the same key, else any online display with that key.
+    /// Finds the current id of a display we disabled, matching by key.
+    /// Preference: inactive (still needs enabling) with the remembered id, any inactive, then active ones.
+    /// `excluding` lets callers hand out one physical display per entry when several share a key.
     public static func resolveID(
         for entry: DisabledDisplay,
-        online: [(id: CGDirectDisplayID, key: DisplayKey)]
+        online: [(id: CGDirectDisplayID, key: DisplayKey)],
+        active: Set<CGDirectDisplayID> = [],
+        excluding: Set<CGDirectDisplayID> = []
     ) -> CGDirectDisplayID? {
-        if let same = online.first(where: { $0.id == entry.id && $0.key == entry.key }) { return same.id }
-        return online.first(where: { $0.key == entry.key })?.id
+        let candidates = online.filter { $0.key == entry.key && !excluding.contains($0.id) }
+        return candidates.first(where: { !active.contains($0.id) && $0.id == entry.id })?.id
+            ?? candidates.first(where: { !active.contains($0.id) })?.id
+            ?? candidates.first(where: { $0.id == entry.id })?.id
+            ?? candidates.first?.id
+    }
+
+    public struct Resolution: Equatable, Sendable {
+        public enum Status: Equatable, Sendable {
+            /// Online but switched off: needs re-enabling (current id).
+            case inactive(CGDirectDisplayID)
+            /// Seen in the active list: nothing left to restore.
+            case active(CGDirectDisplayID)
+            /// Not connected right now.
+            case offline
+            /// Another entry already claimed the only matching display (stale duplicate).
+            case duplicate
+        }
+        public let entry: DisabledDisplay
+        public let status: Status
+    }
+
+    /// Resolves every persisted entry against the live display lists by key.
+    public static func resolveAll(
+        _ entries: [DisabledDisplay],
+        online: [(id: CGDirectDisplayID, key: DisplayKey)],
+        active: Set<CGDirectDisplayID>
+    ) -> [Resolution] {
+        var claimed = Set<CGDirectDisplayID>()
+        return entries.map { entry in
+            guard let target = resolveID(for: entry, online: online, active: active, excluding: claimed) else {
+                let isDuplicate = online.contains { $0.key == entry.key }
+                return Resolution(entry: entry, status: isDuplicate ? .duplicate : .offline)
+            }
+            claimed.insert(target)
+            return Resolution(entry: entry, status: active.contains(target) ? .active(target) : .inactive(target))
+        }
+    }
+
+    /// The entries still worth persisting: drops those whose display is seen active (or duplicates of one),
+    /// keeps offline ones, and refreshes ids of the rest. Idempotent.
+    public static func reconciled(
+        _ entries: [DisabledDisplay],
+        online: [(id: CGDirectDisplayID, key: DisplayKey)],
+        active: Set<CGDirectDisplayID>
+    ) -> [DisabledDisplay] {
+        resolveAll(entries, online: online, active: active).compactMap { r in
+            switch r.status {
+            case .active, .duplicate: nil
+            case .offline: r.entry
+            case .inactive(let id): DisabledDisplay(id: id, key: r.entry.key)
+            }
+        }
     }
 }
 
@@ -76,13 +161,23 @@ public final class DisabledDisplayStore {
     }
 
     public func add(_ entry: DisabledDisplay) {
-        var list = all.filter { $0.id != entry.id && $0.key != entry.key }
+        // Entries are identified by (id, key): two identical monitors share a key but not an id.
+        var list = all.filter { $0 != entry }
         list.append(entry)
         save(list)
     }
 
     public func remove(id: CGDirectDisplayID) {
         save(all.filter { $0.id != id })
+    }
+
+    public func remove(_ entry: DisabledDisplay) {
+        save(all.filter { $0 != entry })
+    }
+
+    /// Replaces the stored list; writes only when it changed.
+    public func replaceAll(_ entries: [DisabledDisplay]) {
+        if entries != all { save(entries) }
     }
 
     private func save(_ list: [DisabledDisplay]) {
