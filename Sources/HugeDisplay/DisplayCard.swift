@@ -33,6 +33,11 @@ struct DisplayHeader: View {
 
     private var isLastActive: Bool { display.isEnabled && manager.activeCount <= 1 }
 
+    private var toggleHelp: LocalizedStringKey {
+        if isLastActive { return "At least one display must stay active" }
+        return display.isEnabled ? "Turn display off" : "Turn display on"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: display.isBuiltin ? "laptopcomputer" : "display")
@@ -59,7 +64,7 @@ struct DisplayHeader: View {
             .toggleStyle(.switch)
             .labelsHidden()
             .disabled(isLastActive)
-            .help(isLastActive ? "At least one display must stay active" : (display.isEnabled ? "Turn display off" : "Turn display on"))
+            .help(toggleHelp)
         }
     }
 }
@@ -79,7 +84,7 @@ struct BrightnessRow: View {
                     onEditingChanged: { state.brightnessEditing($0) }
                 )
                 Image(systemName: "sun.max").font(.caption).foregroundStyle(.secondary)
-                Text("\(Int((state.brightness * 100).rounded()))%")
+                Text(verbatim: "\(Int((state.brightness * 100).rounded()))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 34, alignment: .trailing)
@@ -88,7 +93,7 @@ struct BrightnessRow: View {
         }
     }
 
-    private var backendHelp: String {
+    private var backendHelp: LocalizedStringKey {
         switch state.brightnessBackend {
         case .builtin: "Brightness (Apple)"
         case .ddc: "Brightness (DDC/CI)"
@@ -184,14 +189,15 @@ struct ColorRow: View {
 struct PIPRow: View {
     @ObservedObject var state: DisplayCardModel
 
+    private var pipTitle: LocalizedStringKey { state.pipShowing ? "Hide PIP" : "Show PIP" }
+
     var body: some View {
         HStack {
             if state.hasPipPermission {
                 Button {
                     state.togglePip()
                 } label: {
-                    Label(state.pipShowing ? "Hide PIP" : "Show PIP",
-                          systemImage: state.pipShowing ? "pip.exit" : "pip.enter")
+                    Label(pipTitle, systemImage: state.pipShowing ? "pip.exit" : "pip.enter")
                 }
                 .disabled(state.pipBusy)
                 if state.pipShowing {

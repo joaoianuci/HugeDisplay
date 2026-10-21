@@ -100,23 +100,23 @@ public final class ModeService: ModeServicing {
             cgMode = cache[display]?[mode.id]
         }
         guard let cgMode else {
-            throw HugeDisplayError.operationFailed("Mode \(mode.width)x\(mode.height) is no longer available for this display")
+            throw HugeDisplayError.operationFailed(String(localized: "Mode \(mode.width)x\(mode.height) is no longer available for this display", bundle: .module))
         }
 
         var config: CGDisplayConfigRef?
         var err = CGBeginDisplayConfiguration(&config)
         guard err == .success, let config else {
-            throw HugeDisplayError.operationFailed("Could not begin display configuration (CGError \(err.rawValue))")
+            throw HugeDisplayError.operationFailed(String(localized: "Could not begin display configuration (CGError \(Int(err.rawValue)))", bundle: .module))
         }
         err = CGConfigureDisplayWithDisplayMode(config, display, cgMode, nil)
         guard err == .success else {
             CGCancelDisplayConfiguration(config)
-            throw HugeDisplayError.operationFailed("Could not configure display mode (CGError \(err.rawValue))")
+            throw HugeDisplayError.operationFailed(String(localized: "Could not configure display mode (CGError \(Int(err.rawValue)))", bundle: .module))
         }
         // CGCompleteDisplayConfiguration releases the config itself, success or not: never cancel after it.
         err = CGCompleteDisplayConfiguration(config, option)
         guard err == .success else {
-            throw HugeDisplayError.operationFailed("Could not apply display mode (CGError \(err.rawValue))")
+            throw HugeDisplayError.operationFailed(String(localized: "Could not apply display mode (CGError \(Int(err.rawValue)))", bundle: .module))
         }
     }
 

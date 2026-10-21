@@ -9,6 +9,8 @@ A free, tiny macOS menu-bar app for the display controls you actually use:
 - **Picture-in-Picture** of a whole display in a floating, resizable window (opacity, click-through).
 - Launch at login.
 
+Languages: English, Português (Brasil), Español — follows your macOS language.
+
 No accounts, no license, no telemetry, no updater frameworks, no polling.
 
 | Idle, measured on an M5 | HugeDisplay |

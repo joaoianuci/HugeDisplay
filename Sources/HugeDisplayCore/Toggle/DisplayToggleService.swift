@@ -57,7 +57,7 @@ public final class DisplayToggleService: DisplayToggleServicing {
 
     public func setEnabled(_ enabled: Bool, display id: CGDirectDisplayID) throws {
         guard isAvailable else {
-            throw HugeDisplayError.privateAPIUnavailable("Turning displays on or off isn't supported on this version of macOS.")
+            throw HugeDisplayError.privateAPIUnavailable(String(localized: "Turning displays on or off isn't supported on this version of macOS.", bundle: .module))
         }
         if enabled {
             try enable(id)
@@ -125,7 +125,7 @@ public final class DisplayToggleService: DisplayToggleServicing {
             try configure(entry.id, enabled: true)
         }
         guard Self.activeIDs().contains(entry.id) else {
-            throw HugeDisplayError.operationFailed("macOS didn't bring the display back. Please try again.")
+            throw HugeDisplayError.operationFailed(String(localized: "macOS didn't bring the display back. Please try again.", bundle: .module))
         }
         store.remove(entry)
         manager.forgetDisabled(entry.id)
@@ -133,20 +133,22 @@ public final class DisplayToggleService: DisplayToggleServicing {
 
     private func configure(_ id: CGDirectDisplayID, enabled: Bool) throws {
         guard let configureEnabled else {
-            throw HugeDisplayError.privateAPIUnavailable("Turning displays on or off isn't supported on this version of macOS.")
+            throw HugeDisplayError.privateAPIUnavailable(String(localized: "Turning displays on or off isn't supported on this version of macOS.", bundle: .module))
         }
         var config: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&config) == .success else {
-            throw HugeDisplayError.operationFailed("Couldn't start the display change. Please try again.")
+            throw HugeDisplayError.operationFailed(String(localized: "Couldn't start the display change. Please try again.", bundle: .module))
         }
         guard configureEnabled(config, id, enabled) == .success else {
             CGCancelDisplayConfiguration(config)
-            throw HugeDisplayError.operationFailed("macOS refused to turn the display \(enabled ? "on" : "off").")
+            throw HugeDisplayError.operationFailed(enabled
+                ? String(localized: "macOS refused to turn the display on.", bundle: .module)
+                : String(localized: "macOS refused to turn the display off.", bundle: .module))
         }
         // .forSession: measured on macOS 27, WindowServer does NOT revert .forAppOnly when the process exits,
         // so it buys no safety. Recovery is ours: restore on quit/signals/launch; a reboot re-enables everything.
         guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
-            throw HugeDisplayError.operationFailed("macOS couldn't apply the display change.")
+            throw HugeDisplayError.operationFailed(String(localized: "macOS couldn't apply the display change.", bundle: .module))
         }
     }
 

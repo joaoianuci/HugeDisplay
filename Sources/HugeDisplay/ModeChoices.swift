@@ -1,3 +1,4 @@
+import Foundation
 import HugeDisplayCore
 
 /// A logical resolution the user can pick. Identity is (width, height, HiDPI); `isNative`
@@ -13,7 +14,7 @@ struct ResolutionChoice: Hashable, Identifiable {
     var title: String {
         var s = "\(width) × \(height)"
         if isHiDPI { s += " · HiDPI" }
-        if isNative { s += " · Native" }
+        if isNative { s += " · " + String(localized: "Native") }
         return s
     }
 
@@ -76,7 +77,7 @@ enum ModeChoices {
     static func rateKey(_ rate: Double) -> Int { Int((rate * 100).rounded()) }
 
     static func rateLabel(_ rate: Double) -> String {
-        if rate <= 0 { return "Default" }
+        if rate <= 0 { return String(localized: "Default") }
         if abs(rate - rate.rounded()) < 0.05 { return "\(Int(rate.rounded())) Hz" }
         return String(format: "%.2f Hz", rate)
     }

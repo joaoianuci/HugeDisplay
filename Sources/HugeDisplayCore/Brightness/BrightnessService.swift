@@ -171,7 +171,7 @@ public final class BrightnessService: BrightnessServicing {
         case .software:
             try dimmer.set(brightness: value, for: display)
         case .none:
-            throw HugeDisplayError.unsupported("This display cannot be dimmed")
+            throw HugeDisplayError.unsupported(String(localized: "This display cannot be dimmed", bundle: .module))
         }
     }
 

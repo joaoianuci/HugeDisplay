@@ -6,6 +6,14 @@
     <string>HugeDisplay</string>
     <key>CFBundleDisplayName</key>
     <string>HugeDisplay</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>pt-BR</string>
+        <string>es</string>
+    </array>
     <key>CFBundleIdentifier</key>
     <string>io.github.joaoianuci.HugeDisplay</string>
     <key>CFBundleExecutable</key>

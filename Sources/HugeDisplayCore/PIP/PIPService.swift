@@ -47,10 +47,10 @@ public final class PIPService: PIPServicing {
         } catch let error as NSError where error.domain == SCStreamErrorDomain && error.code == SCStreamError.userDeclined.rawValue {
             throw Self.permissionError
         } catch {
-            throw HugeDisplayError.operationFailed("Could not list displays for capture: \(error.localizedDescription)")
+            throw HugeDisplayError.operationFailed(String(localized: "Could not list displays for capture: \(error.localizedDescription)", bundle: .module))
         }
         guard let source = content.displays.first(where: { $0.displayID == display }) else {
-            throw HugeDisplayError.operationFailed("Display \(display) is not available for capture (disabled or disconnected).")
+            throw HugeDisplayError.operationFailed(String(localized: "Display \(Int(display)) is not available for capture (disabled or disconnected).", bundle: .module))
         }
         guard sessions[display] == nil else { return }
 
@@ -141,7 +141,7 @@ public final class PIPService: PIPServicing {
     // MARK: - Private
 
     private static var permissionError: HugeDisplayError {
-        .refused("Screen Recording permission required. Allow HugeDisplay in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.")
+        .refused(String(localized: "Screen Recording permission required. Allow HugeDisplay in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.", bundle: .module))
     }
 
     /// Excludes HugeDisplay's own windows so a PIP can never capture itself (the panel also opts out via sharingType).

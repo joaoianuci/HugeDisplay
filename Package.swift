@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "HugeDisplay",
+    defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "HugeDisplay", targets: ["HugeDisplay"]),
@@ -10,6 +11,7 @@ let package = Package(
     targets: [
         .target(
             name: "HugeDisplayCore",
+            resources: [.process("Resources")],
             linkerSettings: [
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("IOKit"),

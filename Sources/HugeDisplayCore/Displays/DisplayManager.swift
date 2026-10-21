@@ -70,7 +70,7 @@ public final class DisplayManager: ObservableObject {
             let previous = displays.first(where: { $0.id == entry.id })
             addInactive(previous ?? Display(
                 id: entry.id, key: entry.key,
-                name: entry.name ?? keyNameCache[entry.key] ?? "Display",
+                name: entry.name ?? keyNameCache[entry.key] ?? String(localized: "Display", bundle: .module),
                 isBuiltin: entry.isBuiltin ?? false, isMain: false, isEnabled: false, isVirtual: false, currentMode: nil
             ))
         }
@@ -121,7 +121,9 @@ public final class DisplayManager: ObservableObject {
         if let cached = nameCache[id] { return cached }
         let key = DisplayKey(id)
         let screenName = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }?.localizedName
-        let n = screenName ?? keyNameCache[key] ?? (CGDisplayIsBuiltin(id) != 0 ? "Built-in Display" : "Display \(id)")
+        let n = screenName ?? keyNameCache[key] ?? (CGDisplayIsBuiltin(id) != 0
+            ? String(localized: "Built-in Display", bundle: .module)
+            : String(localized: "Display \(Int(id))", bundle: .module))
         nameCache[id] = n
         if screenName != nil { keyNameCache[key] = n }
         return n

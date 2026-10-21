@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Small capsule label used for Built-in / Main / HiDPI.
 struct Badge: View {
-    let text: String
+    /// A key (not a `String`) so `Text` looks it up in the main bundle's Localizable.strings.
+    let text: LocalizedStringKey
 
     var body: some View {
         Text(text)
@@ -15,8 +16,9 @@ struct Badge: View {
 }
 
 /// Label + control row with a fixed label column so pickers line up across a card.
+/// The label may wrap to two lines: translated titles ("Frecuencia de actualización") are long.
 struct ControlRow<Content: View>: View {
-    let title: String
+    let title: LocalizedStringKey
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -24,7 +26,9 @@ struct ControlRow<Content: View>: View {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 68, alignment: .leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 84, alignment: .leading)
             content
         }
     }

@@ -37,10 +37,10 @@ public final class ColorService: ColorServicing {
 
     public func apply(_ preset: ColorPreset, to display: CGDirectDisplayID) throws {
         guard FileManager.default.fileExists(atPath: preset.id) else {
-            throw HugeDisplayError.operationFailed("Color profile not found: \(preset.name)")
+            throw HugeDisplayError.operationFailed(String(localized: "Color profile not found: \(preset.name)", bundle: .module))
         }
         guard let uuid = Self.deviceUUID(for: display) else {
-            throw HugeDisplayError.operationFailed("Could not identify display \(display) for ColorSync")
+            throw HugeDisplayError.operationFailed(String(localized: "Could not identify display \(Int(display)) for ColorSync", bundle: .module))
         }
         let url = URL(fileURLWithPath: preset.id)
         let info = Self.deviceInfo(for: display)
@@ -52,7 +52,7 @@ public final class ColorService: ColorServicing {
         for key in keys { profiles[key as CFString] = url }
         let ok = ColorSyncDeviceSetCustomProfiles(kColorSyncDisplayDeviceClass.takeUnretainedValue(), uuid, profiles as CFDictionary)
         guard ok else {
-            throw HugeDisplayError.operationFailed("ColorSync refused profile \"\(preset.name)\" for display \(display)")
+            throw HugeDisplayError.operationFailed(String(localized: "ColorSync refused profile \"\(preset.name)\" for display \(Int(display))", bundle: .module))
         }
     }
 

@@ -33,8 +33,8 @@ struct BuiltinBrightness {
     }
 
     func setBrightness(_ value: Double, _ id: CGDirectDisplayID) throws {
-        guard let set else { throw HugeDisplayError.privateAPIUnavailable("DisplayServices brightness is unavailable") }
+        guard let set else { throw HugeDisplayError.privateAPIUnavailable(String(localized: "DisplayServices brightness is unavailable", bundle: .module)) }
         let rc = set(id, Float(min(max(value, 0), 1)))
-        guard rc == 0 else { throw HugeDisplayError.operationFailed("DisplayServicesSetBrightness failed (\(rc))") }
+        guard rc == 0 else { throw HugeDisplayError.operationFailed(String(localized: "DisplayServicesSetBrightness failed (\(Int(rc)))", bundle: .module)) }
     }
 }

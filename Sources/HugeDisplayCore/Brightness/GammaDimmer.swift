@@ -46,6 +46,6 @@ final class GammaDimmer {
 
     private func apply(_ f: Float, to id: CGDirectDisplayID) throws {
         let err = CGSetDisplayTransferByFormula(id, 0, f, 1, 0, f, 1, 0, f, 1)
-        guard err == .success else { throw HugeDisplayError.operationFailed("Gamma dimming failed (\(err.rawValue))") }
+        guard err == .success else { throw HugeDisplayError.operationFailed(String(localized: "Gamma dimming failed (\(Int(err.rawValue)))", bundle: .module)) }
     }
 }

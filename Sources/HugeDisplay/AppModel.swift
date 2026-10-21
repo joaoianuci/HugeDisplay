@@ -120,7 +120,7 @@ final class AppModel: ObservableObject {
             }
             lastError = nil
         } catch {
-            lastError = "Launch at login: \(error.localizedDescription)"
+            lastError = String(localized: "Launch at login: \(error.localizedDescription)")
         }
         refreshLaunchAtLogin()
     }

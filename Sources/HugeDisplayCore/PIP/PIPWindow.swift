@@ -88,7 +88,7 @@ final class PIPView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
 
-        let opacityItem = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
+        let opacityItem = NSMenuItem(title: String(localized: "Opacity", bundle: .module), action: nil, keyEquivalent: "")
         let opacityMenu = NSMenu()
         for value in PIPGeometry.allowedOpacities {
             let item = NSMenuItem(title: "\(Int((value * 100).rounded()))%", action: #selector(opacityChosen(_:)), keyEquivalent: "")
@@ -100,13 +100,13 @@ final class PIPView: NSView {
         opacityItem.submenu = opacityMenu
         menu.addItem(opacityItem)
 
-        let clickThrough = NSMenuItem(title: "Click-through (undo from the HugeDisplay menu)", action: #selector(clickThroughChosen(_:)), keyEquivalent: "")
+        let clickThrough = NSMenuItem(title: String(localized: "Click-through (undo from the HugeDisplay menu)", bundle: .module), action: #selector(clickThroughChosen(_:)), keyEquivalent: "")
         clickThrough.target = self
         clickThrough.state = isClickThrough ? .on : .off
         menu.addItem(clickThrough)
 
         menu.addItem(.separator())
-        let close = NSMenuItem(title: "Close", action: #selector(closeChosen(_:)), keyEquivalent: "")
+        let close = NSMenuItem(title: String(localized: "Close", bundle: .module), action: #selector(closeChosen(_:)), keyEquivalent: "")
         close.target = self
         menu.addItem(close)
         return menu

@@ -74,13 +74,13 @@ public enum TogglePolicy {
         online: [CGDirectDisplayID]
     ) -> Decision {
         guard online.contains(target) else {
-            return .refused("That display isn't connected anymore.")
+            return .refused(String(localized: "That display isn't connected anymore.", bundle: .module))
         }
         guard active.contains(where: { $0.id == target }) else {
-            return .refused("That display is already turned off.")
+            return .refused(String(localized: "That display is already turned off.", bundle: .module))
         }
         guard active.contains(where: { $0.id != target && $0.isUsable }) else {
-            return .refused("You can't turn off your only active display.")
+            return .refused(String(localized: "You can't turn off your only active display.", bundle: .module))
         }
         return .allowed
     }
