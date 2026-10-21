@@ -33,6 +33,22 @@ if [ ! -d "$CORE_BUNDLE" ]; then
 fi
 cp -R "$CORE_BUNDLE" "$APP/Contents/Resources/"
 
+# Older SwiftPM toolchains (e.g. Swift 6.1 on CI) emit lowercased region folders such as pt-br.lproj,
+# which Foundation won't match against the user's "pt-BR". Rename to the canonical names and refuse
+# to ship a bundle that is missing a language.
+CORE_RES="$APP/Contents/Resources/HugeDisplay_HugeDisplayCore.bundle/Contents/Resources"
+[ -d "$CORE_RES" ] || CORE_RES="$APP/Contents/Resources/HugeDisplay_HugeDisplayCore.bundle"
+for lang in en es pt-BR; do
+    found="$(find "$CORE_RES" -maxdepth 1 -iname "$lang.lproj" | head -1)"
+    if [ -z "$found" ]; then
+        echo "error: $lang.lproj missing from HugeDisplayCore resources" >&2
+        exit 1
+    fi
+    if [ "$(basename "$found")" != "$lang.lproj" ]; then
+        mv "$found" "$CORE_RES/$lang.tmp" && mv "$CORE_RES/$lang.tmp" "$CORE_RES/$lang.lproj"
+    fi
+done
+
 # A stable designated requirement keeps the Screen Recording grant across rebuilds
 # as long as the same identity signs it; ad-hoc ("-") is fine for local beta use.
 codesign --force --sign "${SIGN_IDENTITY:--}" --identifier io.github.joaoianuci.HugeDisplay "$APP"

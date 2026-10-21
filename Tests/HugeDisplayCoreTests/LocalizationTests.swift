@@ -31,9 +31,18 @@ final class LocalizationTests: XCTestCase {
 
     // MARK: - Core bundle
 
-    func testCoreBundleShipsAllThreeLanguages() {
+    /// Older SwiftPM versions lowercase region folders (pt-br.lproj); scripts/build-app.sh renames them
+    /// to the canonical name in the shipped app, so the build products are matched case-insensitively.
+    private func coreLprojBundle(_ language: String) throws -> Bundle {
+        let lowered = Bundle.module.localizations.first { $0.lowercased() == language.lowercased() }
+        let name = try XCTUnwrap(lowered, "Missing \(language).lproj in the Core bundle")
+        let path = try XCTUnwrap(Bundle.module.path(forResource: name, ofType: "lproj"))
+        return try XCTUnwrap(Bundle(path: path))
+    }
+
+    func testCoreBundleShipsAllThreeLanguages() throws {
         for language in Self.languages {
-            XCTAssertTrue(Bundle.module.localizations.contains(language), "Missing \(language).lproj in the Core bundle")
+            _ = try coreLprojBundle(language)
         }
     }
 
@@ -72,16 +81,14 @@ final class LocalizationTests: XCTestCase {
     /// `String(localized:bundle:)` must resolve through the same lproj tables for a given language.
     func testLookupResolvesPerLanguage() throws {
         for (language, expected) in [("en", "Close"), ("pt-BR", "Fechar"), ("es", "Cerrar")] {
-            let path = try XCTUnwrap(Bundle.module.path(forResource: language, ofType: "lproj"))
-            let bundle = try XCTUnwrap(Bundle(path: path))
+            let bundle = try coreLprojBundle(language)
             XCTAssertEqual(bundle.localizedString(forKey: "Close", value: nil, table: nil), expected)
         }
     }
 
     /// Keys with interpolations must resolve to translated, correctly-substituted text.
     func testInterpolatedFormatKeys() throws {
-        let path = try XCTUnwrap(Bundle.module.path(forResource: "pt-BR", ofType: "lproj"))
-        let bundle = try XCTUnwrap(Bundle(path: path))
+        let bundle = try coreLprojBundle("pt-BR")
         let format = bundle.localizedString(forKey: "Display %lld", value: nil, table: nil)
         XCTAssertEqual(String(format: format, 3), "Monitor 3")
     }
